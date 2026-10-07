@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Alert Invaders</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --text:#e2e8f0; --muted:#94a3b8;
+          --ok:#22c55e; --bad:#ef4444; --review:#f59e0b; --miss:#64748b; --accent:#38bdf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 "Segoe UI",system-ui,sans-serif; }
+  header { padding:12px 16px; border-bottom:1px solid var(--line); }
+  h1 { margin:0 0 8px; font-size:20px; }
+  h1 span { color:var(--muted); font-weight:400; font-size:13px; margin-left:8px; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:end; }
+  .controls label { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted); }
+  input, select, button { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line);
+          border-radius:6px; padding:6px 8px; }
+  input[type=text] { width:300px; }
+  input[type=number] { width:80px; }
+  button { cursor:pointer; font-weight:600; padding:6px 16px; }
+  button.primary { background:var(--accent); color:#0f172a; border-color:var(--accent); }
+  button:disabled { opacity:.45; cursor:default; }
+  #banner { margin:8px 16px 0; padding:8px 12px; border-radius:6px; background:#7f1d1d; display:none; }
+  #hud { display:flex; flex-wrap:wrap; gap:8px; padding:10px 16px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:6px 12px; min-width:104px; }
+  .stat b { display:block; font-size:20px; }
+  .stat small { color:var(--muted); }
+  #wrap { margin:0 16px; min-width:1120px; }
+  #field { position:relative; height:340px; border:1px solid var(--line); border-bottom:0; border-radius:8px 8px 0 0;
+           overflow:hidden; background:linear-gradient(#0b1220,#111c33); }
+  #field.paused::after { content:"Paused"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+           font-size:34px; font-weight:700; color:var(--text); background:rgba(2,6,23,.55); }
+  #wavebar { position:absolute; top:8px; left:12px; color:var(--muted); font-size:12px; }
+  .alert { position:absolute; width:236px; padding:7px 9px; border-radius:6px; background:#1e293b;
+           border:2px solid var(--accent); font-size:12px; line-height:1.3; will-change:transform; }
+  .alert .meta { color:var(--muted); font-size:11px; margin-top:3px; }
+  .ok { border-color:var(--ok) !important; background:#052e16 !important; }
+  .bad { border-color:var(--bad) !important; background:#450a0a !important; }
+  .review { border-color:var(--review) !important; background:#451a03 !important; }
+  .miss { border-color:var(--miss) !important; background:#1f2937 !important; }
+  #bins { display:flex; border:1px solid var(--line); border-radius:0 0 8px 8px; }
+  .bin { flex:1 1 0; min-width:0; border-right:1px solid var(--line); display:flex; flex-direction:column; }
+  .bin:last-child { border-right:0; }
+  .bin h3 { margin:0; padding:7px 8px; font-size:13px; text-transform:capitalize; background:var(--panel);
+            border-bottom:2px solid var(--line); display:flex; justify-content:space-between; align-items:baseline; }
+  .bin h3 small { color:var(--muted); font-weight:400; text-transform:none; }
+  .bin[data-bin=review] h3 { color:var(--review); }
+  .bin[data-bin=missed] h3 { color:var(--muted); }
+  .stack { height:330px; overflow-y:auto; padding:6px; display:flex; flex-direction:column; gap:5px; }
+  .item { border:1px solid; border-left-width:4px; border-radius:5px; padding:5px 7px; font-size:11px; line-height:1.3; }
+  .item .meta { color:var(--muted); margin-top:3px; }
+  .item .meta b { color:var(--text); font-weight:600; }
+  .legend { margin:8px 16px; color:var(--muted); font-size:12px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 12px; }
+  table { border-collapse:collapse; margin:12px 16px 24px; }
+  th, td { border:1px solid var(--line); padding:5px 12px; text-align:right; }
+  th { background:var(--panel); color:var(--muted); font-weight:600; }
+  td:first-child, th:first-child { text-align:left; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Alert Invaders <span>Azure Monitor alerts fall, a local decision model routes each one before it lands</span></h1>
+  <div class="controls">
+    <label>Mode
+      <select id="mode"><option value="live">Live model</option><option value="mock">Mock (no server)</option></select>
+    </label>
+    <label>Endpoint <input type="text" id="url" value="http://localhost:8080/v1/systemone"></label>
+    <label>Label <input type="text" id="label" value="Laya Q8_0" style="width:130px"></label>
+    <label>Parallel requests <input type="number" id="conc" min="1" max="8" value="1"></label>
+    <label>Confidence gate <input type="number" id="gate" min="0" max="1" step="0.05" value="0.6"></label>
+    <label>Mock latency ms <input type="number" id="mockms" min="1" value="80"></label>
+    <label>Game speed
+      <select id="speed"><option value="1">1x</option><option value="2">2x</option><option value="5">5x</option><option value="10">10x</option></select>
+    </label>
+    <button class="primary" id="start">Start</button>
+    <button id="pause" disabled>Pause</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+</header>
+<div id="banner"></div>
+<div id="hud">
+  <div class="stat"><small>Wave</small><b id="s-wave">0 / 10</b></div>
+  <div class="stat"><small>Alerts per second</small><b id="s-rate">0.0</b></div>
+  <div class="stat"><small>Routed correctly</small><b id="s-ok" style="color:var(--ok)">0</b></div>
+  <div class="stat"><small>Routed wrongly</small><b id="s-bad" style="color:var(--bad)">0</b></div>
+  <div class="stat"><small>Human review</small><b id="s-review" style="color:var(--review)">0</b></div>
+  <div class="stat"><small>Missed</small><b id="s-miss" style="color:var(--miss)">0</b></div>
+  <div class="stat"><small>Median latency</small><b id="s-lat">0 ms</b></div>
+  <div class="stat"><small>Waiting on model</small><b id="s-queue">0</b></div>
+</div>
+<div id="wrap">
+  <div id="field"><div id="wavebar"></div></div>
+  <div id="bins"></div>
+</div>
+<div class="legend">
+  <i style="background:var(--accent)"></i>waiting on the model
+  <i style="background:var(--ok)"></i>routed to the right queue
+  <i style="background:var(--bad)"></i>routed to the wrong queue
+  <i style="background:var(--review)"></i>confidence under the gate, sent to a person
+  <i style="background:var(--miss)"></i>landed before the model answered
+  &nbsp; Every alert stays in the column it landed in, newest at the top, so the run can be reviewed afterwards.
+</div>
+<table id="results">
+  <thead><tr><th>Wave</th><th>Alerts per second</th><th>Correct</th><th>Wrong</th><th>Human review</th><th>Missed</th><th>Median latency</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<script>
+const QUEUES = {
+  identity: "Entra ID sign-ins, Conditional Access, MFA, and account lockouts",
+  network: "Virtual networks, firewalls, VPN, ExpressRoute, DNS, and load balancers",
+  compute: "Virtual machines, App Service, Functions, and container workloads",
+  data: "Storage accounts, SQL, Cosmos DB, and backups",
+  cost: "Budgets, spend anomalies, and quota"
+};
+const BIN_NAMES = [...Object.keys(QUEUES), "review", "missed"];
+const BIN_TITLES = { review: "Human review", missed: "Missed" };
+
+const ALERTS = [
+  ["identity", "Entra ID failed sign-ins spike. 412 failed sign-ins across 187 accounts from 3 IP addresses in 15 minutes."],
+  ["identity", "Conditional Access policy 'Require MFA for admins' was modified outside the change window."],
+  ["identity", "User denied 30 MFA prompts in 10 minutes."],
+  ["identity", "Break-glass emergency access account signed in from an unfamiliar country."],
+  ["identity", "Account locked out 14 times in one hour after repeated bad passwords."],
+  ["identity", "New Global Administrator role assignment added to a guest user."],
+  ["identity", "Risky sign-in detected. Impossible travel between Toronto and Lagos for the same user."],
+  ["identity", "Service principal sign-in failures. Client secret has expired for app registration payroll-sync."],
+  ["network", "ExpressRoute circuit BGP peering session is down on the primary link."],
+  ["network", "Azure Firewall SNAT port utilization reached 95 percent."],
+  ["network", "Site-to-site VPN tunnel to the branch office disconnected."],
+  ["network", "Application Gateway reports 3 of 4 backend pool members unhealthy."],
+  ["network", "Private DNS zone resolution failures for privatelink.database.windows.net."],
+  ["network", "Load balancer health probe failing on port 443 for all instances."],
+  ["network", "Packet drops rising on hub virtual network gateway. Latency to on-premises above 300 ms."],
+  ["network", "Route table change removed the default route to the firewall on the spoke subnet."],
+  ["compute", "Virtual machine vm-app-prod-02 CPU above 98 percent for 30 minutes."],
+  ["compute", "App Service returning HTTP 5xx on 12 percent of requests."],
+  ["compute", "Function App execution failures. 240 failed invocations in 5 minutes."],
+  ["compute", "AKS node pool has 2 nodes in NotReady state."],
+  ["compute", "Virtual machine available memory below 5 percent on vm-web-prod-01."],
+  ["compute", "Virtual machine scale set failed to scale out. Allocation failed for 3 instances."],
+  ["compute", "Container app revision is in a restart loop. 18 restarts in 10 minutes."],
+  ["compute", "Virtual machine heartbeat missing for 10 minutes on vm-batch-prod-04."],
+  ["data", "Storage account availability dropped to 97 percent."],
+  ["data", "Azure SQL Database DTU consumption at 100 percent for 20 minutes."],
+  ["data", "Cosmos DB returning HTTP 429 throttled requests on the orders container."],
+  ["data", "Backup job failed for vm-sql-prod-01. Last successful recovery point is 3 days old."],
+  ["data", "Azure SQL deadlocks detected. 45 deadlocks in the last hour."],
+  ["data", "Blob storage used capacity reached 95 percent of the configured limit."],
+  ["data", "SQL Managed Instance log file is 98 percent full."],
+  ["data", "Geo-replication lag on the secondary database exceeds 15 minutes."],
+  ["cost", "Subscription budget reached 90 percent of the monthly amount with 12 days remaining."],
+  ["cost", "Cost anomaly detected. Daily spend in rg-data-prod is up 240 percent over the baseline."],
+  ["cost", "Regional vCPU quota is 95 percent used in Canada Central."],
+  ["cost", "Forecasted month-end spend exceeds the approved budget by 4,200 dollars."],
+  ["cost", "Reserved instance utilization dropped to 40 percent this week."],
+  ["cost", "Public IP address quota reached for the subscription. New deployments will fail."],
+  ["cost", "Log Analytics ingestion charges doubled week over week."],
+  ["cost", "Budget alert. Development subscription has exceeded 100 percent of its monthly budget."]
+];
+
+const WAVES = 10, PER_WAVE = 10;
+const $ = id => document.getElementById(id);
+const field = $("field"), binsEl = $("bins");
+
+BIN_NAMES.forEach(n => {
+  const d = document.createElement("div");
+  d.className = "bin"; d.dataset.bin = n;
+  d.innerHTML = "<h3>" + (BIN_TITLES[n] || n) + ' <small><span class="count">0</span></small></h3><div class="stack"></div>';
+  binsEl.appendChild(d);
+});
+
+// The speed multiplier is read every frame, so it can be changed while a game is running.
+function speed() { return Math.max(1, +$("speed").value || 1); }
+
+let g = null;
+
+function binCenter(name) {
+  const w = field.clientWidth / BIN_NAMES.length;
+  return BIN_NAMES.indexOf(name) * w + w / 2;
+}
+function median(a) {
+  if (!a.length) return 0;
+  const s = [...a].sort((x, y) => x - y), m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+function waveParams(w) {
+  return { interval: 2200 * Math.pow(0.8, w - 1), fall: Math.max(2.5, 7 * Math.pow(0.9, w - 1)) };
+}
+function newWaveStats() { return { ok: 0, bad: 0, review: 0, miss: 0, lat: [] }; }
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+
+function start() {
+  document.querySelectorAll(".alert").forEach(e => e.remove());
+  document.querySelectorAll(".stack").forEach(e => e.innerHTML = "");
+  document.querySelectorAll(".count").forEach(e => e.textContent = "0");
+  $("results").querySelector("tbody").innerHTML = "";
+  $("banner").style.display = "none";
+  field.classList.remove("paused");
+  g = {
+    mode: $("mode").value, url: $("url").value.trim(), conc: Math.max(1, +$("conc").value || 1),
+    gate: +$("gate").value || 0, mockms: +$("mockms").value || 80,
+    deck: shuffle(ALERTS.map((a, i) => i)), deckPos: 0,
+    wave: 1, spawnedInWave: 0, nextSpawn: 0, lane: 0, clock: 0, paused: false, held: [],
+    alerts: [], queue: [], inflight: 0, stats: [], running: true, last: performance.now(), id: 0
+  };
+  for (let i = 0; i <= WAVES; i++) g.stats.push(newWaveStats());
+  $("start").disabled = true; $("pause").disabled = false; $("stop").disabled = false;
+  $("pause").textContent = "Pause";
+  requestAnimationFrame(loop);
+}
+
+function togglePause() {
+  if (!g || !g.running) return;
+  g.paused = !g.paused;
+  field.classList.toggle("paused", g.paused);
+  $("pause").textContent = g.paused ? "Resume" : "Pause";
+  if (!g.paused) {
+    g.last = performance.now();
+    const held = g.held; g.held = [];
+    held.forEach(h => resolve(h.a, h.r, h.ms));
+    pump();
+  }
+}
+
+function stop() {
+  if (!g || !g.running) return;
+  // Anything still on screen is filed as it stands, so the columns hold the whole run.
+  for (const a of g.alerts) {
+    if (a.state === "falling") { g.stats[a.wave].miss++; a.outcome = "miss"; a.note = "the run was stopped before the model answered"; a.bin = "missed"; }
+    stack(a);
+  }
+  g.alerts = [];
+  finish();
+}
+
+function spawn() {
+  if (g.deckPos >= g.deck.length) { g.deck = shuffle(g.deck); g.deckPos = 0; }
+  const [truth, text] = ALERTS[g.deck[g.deckPos++]];
+  const el = document.createElement("div");
+  el.className = "alert";
+  el.innerHTML = text + '<div class="meta">waiting on the model</div>';
+  field.appendChild(el);
+  const lanes = 4, laneW = field.clientWidth / lanes;
+  const x = (g.lane++ % lanes) * laneW + laneW / 2;
+  const a = { id: ++g.id, el, text, truth, wave: g.wave, x, y: 28, state: "falling", fall: waveParams(g.wave).fall };
+  g.alerts.push(a);
+  g.queue.push(a);
+  pump();
+}
+
+function pump() {
+  while (g && g.running && !g.paused && g.inflight < g.conc && g.queue.length) {
+    const a = g.queue.shift();
+    if (a.state !== "falling") continue;
+    g.inflight++;
+    const run = g, t0 = performance.now();
+    ask(a.text).then(r => {
+      if (g !== run) return;
+      g.inflight--;
+      const ms = performance.now() - t0;
+      if (g.paused) g.held.push({ a, r, ms }); else resolve(a, r, ms);
+      pump();
+    }).catch(err => {
+      if (g !== run) return;
+      g.inflight--;
+      fail(err);
+    });
+  }
+}
+
+function ask(text) {
+  if (g.mode === "mock") {
+    const truth = ALERTS.find(x => x[1] === text)[0];
+    const right = Math.random() < 0.85;
+    const others = Object.keys(QUEUES).filter(q => q !== truth);
+    const choice = right ? truth : others[Math.floor(Math.random() * others.length)];
+    const confidence = right ? 0.65 + Math.random() * 0.35 : 0.3 + Math.random() * 0.5;
+    const ms = g.mockms * (0.85 + Math.random() * 0.3);
+    return new Promise(res => setTimeout(() => res({ choice, confidence }), ms));
+  }
+  const body = {
+    state: "Azure Monitor alert: " + text,
+    questions: { route: { type: "choice", instructions: "Which operations queue should own this Azure Monitor alert?", criteria: QUEUES } }
+  };
+  return fetch(g.url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(j => {
+      const a = j.answers && j.answers.route;
+      if (!a || !a.choice) throw new Error("Unexpected response shape");
+      return { choice: a.choice, confidence: typeof a.confidence === "number" ? a.confidence : 1 };
+    });
+}
+
+function resolve(a, r, ms) {
+  if (!g.running) return;
+  const st = g.stats[a.wave];
+  st.lat.push(ms);
+  if (a.state !== "falling") return;
+  let outcome, bin;
+  if (r.confidence < g.gate) { outcome = "review"; bin = "review"; }
+  else if (r.choice === a.truth) { outcome = "ok"; bin = r.choice; }
+  else { outcome = "bad"; bin = r.choice; }
+  st[outcome]++;
+  a.state = "flying"; a.outcome = outcome; a.bin = bin;
+  a.note = "<b>" + r.choice + "</b> at " + r.confidence.toFixed(2) + " confidence, " + Math.round(ms) + " ms" +
+    (r.choice !== a.truth ? ", belongs in <b>" + a.truth + "</b>" : "");
+  a.el.classList.add(outcome);
+  a.el.querySelector(".meta").innerHTML = a.note;
+  a.fromX = a.x; a.fromY = a.y; a.toX = binCenter(bin); a.flyStart = g.clock;
+}
+
+// Files a finished alert in its column, newest first, and removes the falling card.
+function stack(a) {
+  a.el.remove();
+  const col = binsEl.querySelector('[data-bin="' + a.bin + '"]');
+  const item = document.createElement("div");
+  item.className = "item " + a.outcome;
+  item.innerHTML = a.text + '<div class="meta">Wave ' + a.wave + ". " + a.note + "</div>";
+  col.querySelector(".stack").prepend(item);
+  col.querySelector(".count").textContent = col.querySelectorAll(".item").length;
+}
+
+function fail(err) {
+  g.running = false;
+  $("banner").textContent = "Could not get an answer from " + g.url + " (" + err.message +
+    "). Check that llama serve is running with a decision model loaded, or switch Mode to Mock.";
+  $("banner").style.display = "block";
+  $("start").disabled = false; $("pause").disabled = true; $("stop").disabled = true;
+}
+
+function loop(now) {
+  if (!g || !g.running) return;
+  if (g.paused) { g.last = now; return requestAnimationFrame(loop); }
+  const dt = Math.min(0.1, (now - g.last) / 1000) * speed();
+  g.last = now; g.clock += dt * 1000;
+  const floor = field.clientHeight;
+
+  if (g.wave <= WAVES && g.clock >= g.nextSpawn) {
+    spawn();
+    g.spawnedInWave++;
+    g.nextSpawn = g.clock + waveParams(g.wave).interval;
+    if (g.spawnedInWave >= PER_WAVE) { g.wave++; g.spawnedInWave = 0; }
+  }
+
+  for (const a of g.alerts) {
+    const h = a.el.offsetHeight;
+    if (a.state === "falling") {
+      a.y += (floor - 28) / a.fall * dt;
+      if (a.y + h >= floor) {
+        a.state = "gone"; a.outcome = "miss"; a.bin = "missed"; a.note = "landed before the model answered";
+        g.stats[a.wave].miss++;
+        stack(a);
+      }
+    } else if (a.state === "flying") {
+      const t = Math.min(1, (g.clock - a.flyStart) / 450), e = 1 - Math.pow(1 - t, 3);
+      a.x = a.fromX + (a.toX - a.fromX) * e;
+      a.y = a.fromY + (floor - h - a.fromY) * e;
+      if (t >= 1) { a.state = "gone"; stack(a); }
+    }
+    if (a.state !== "gone") a.el.style.transform = "translate(" + (a.x - 118) + "px," + a.y + "px)";
+  }
+  g.alerts = g.alerts.filter(a => a.state !== "gone");
+
+  render();
+  if (g.wave > WAVES && !g.alerts.length && !g.inflight) return finish();
+  requestAnimationFrame(loop);
+}
+
+function totals() {
+  const t = newWaveStats();
+  g.stats.forEach(s => { t.ok += s.ok; t.bad += s.bad; t.review += s.review; t.miss += s.miss; t.lat.push(...s.lat); });
+  return t;
+}
+
+function render() {
+  const t = totals(), w = Math.min(g.wave, WAVES);
+  $("s-wave").textContent = w + " / " + WAVES;
+  $("s-rate").textContent = (1000 / waveParams(w).interval * speed()).toFixed(1);
+  $("s-ok").textContent = t.ok; $("s-bad").textContent = t.bad;
+  $("s-review").textContent = t.review; $("s-miss").textContent = t.miss;
+  $("s-lat").textContent = Math.round(median(t.lat)) + " ms";
+  $("s-queue").textContent = g.queue.filter(a => a.state === "falling").length + g.inflight;
+  $("wavebar").textContent = $("label").value + ", " + (g.mode === "mock" ? "mock mode" : g.url) +
+    ", " + g.conc + " parallel, " + speed() + "x speed, alerts take " + (waveParams(w).fall / speed()).toFixed(1) + " s to land";
+}
+
+function finish() {
+  g.running = false;
+  field.classList.remove("paused");
+  render();
+  const tb = $("results").querySelector("tbody");
+  const row = (name, rate, s) => "<tr><td>" + name + "</td><td>" + rate + "</td><td>" + s.ok + "</td><td>" + s.bad +
+    "</td><td>" + s.review + "</td><td>" + s.miss + "</td><td>" + Math.round(median(s.lat)) + " ms</td></tr>";
+  let html = "";
+  for (let w = 1; w <= WAVES; w++) {
+    const s = g.stats[w];
+    if (s.ok + s.bad + s.review + s.miss) html += row(w, (1000 / waveParams(w).interval * speed()).toFixed(1), s);
+  }
+  html += row("Total, " + $("label").value + ", " + speed() + "x speed", "", totals());
+  tb.innerHTML = html;
+  $("start").disabled = false; $("pause").disabled = true; $("stop").disabled = true;
+  $("pause").textContent = "Pause";
+}
+
+$("start").addEventListener("click", start);
+$("pause").addEventListener("click", togglePause);
+$("stop").addEventListener("click", stop);
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "p" || e.key === "P") togglePause();
+});
+
+// Remembers the settings in this browser so a refresh keeps them.
+(function () {
+  const KEY = "alert-invaders-settings", IDS = ["mode", "url", "label", "conc", "gate", "mockms", "speed"];
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { saved = {}; }
+  IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (typeof saved[id] === "string") {
+      el.value = saved[id];
+      if (el.tagName === "SELECT" && el.value !== saved[id]) el.selectedIndex = 0;
+    }
+    const save = () => {
+      saved[id] = el.value;
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) { /* storage unavailable, settings just will not persist */ }
+    };
+    el.addEventListener("change", save);
+    el.addEventListener("input", save);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Space Invaders, you against a local decision model</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --bg:#0f172a; --panel:#1e293b; --line:#334155; --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.4 "Segoe UI",system-ui,sans-serif; }
+  header { padding:12px 16px; border-bottom:1px solid var(--line); }
+  h1 { margin:0 0 8px; font-size:20px; }
+  h1 span { color:var(--muted); font-weight:400; font-size:13px; margin-left:8px; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:end; }
+  .controls label { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted); }
+  input, select, button { font:inherit; color:var(--text); background:var(--panel); border:1px solid var(--line);
+          border-radius:6px; padding:6px 8px; }
+  input[type=text] { width:300px; }
+  input.short { width:130px; }
+  input[type=number] { width:80px; }
+  button { cursor:pointer; background:var(--accent); color:#0f172a; border-color:var(--accent); font-weight:600; padding:6px 16px; }
+  button:disabled { opacity:.5; cursor:default; }
+  #banner { margin:8px 16px 0; padding:8px 12px; border-radius:6px; background:#7f1d1d; display:none; }
+  main { display:flex; flex-wrap:wrap; gap:16px; padding:16px; justify-content:center; }
+  .board { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; width:444px; }
+  .board h2 { margin:0 0 6px; font-size:15px; display:flex; justify-content:space-between; }
+  .board h2 small { color:var(--muted); font-weight:400; }
+  canvas { display:block; background:#020617; border-radius:6px; }
+  .hud { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:8px; }
+  .hud div { background:#0b1220; border:1px solid var(--line); border-radius:6px; padding:4px 8px; }
+  .hud small { color:var(--muted); display:block; font-size:11px; }
+  .hud b { font-size:16px; }
+  .said { margin-top:8px; padding:6px 8px; min-height:74px; background:#0b1220; border:1px solid var(--line);
+          border-radius:6px; font-size:12px; color:var(--muted); }
+  .said b { color:var(--text); }
+  #clock { text-align:center; font-size:22px; font-weight:700; padding-top:10px; }
+  table { border-collapse:collapse; margin:0 auto 24px; }
+  th, td { border:1px solid var(--line); padding:5px 12px; text-align:right; }
+  th { background:var(--panel); color:var(--muted); font-weight:600; }
+  td:first-child, th:first-child { text-align:left; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Space Invaders <span>two identical boards, you on the left and the model on the right, both in real time</span></h1>
+  <div class="controls">
+    <label>Mode
+      <select id="mode"><option value="live">Live model</option><option value="mock">Mock (no server)</option></select>
+    </label>
+    <label>Prompt
+      <select id="style"><option value="fact">One fact, one question</option><option value="full">Full description, two questions</option></select>
+    </label>
+    <label>Endpoint <input type="text" id="url" value="http://localhost:8080/v1/systemone"></label>
+    <label>Model label <input type="text" class="short" id="label" value="Laya Q8_0"></label>
+    <label>Seconds <input type="number" id="secs" min="20" max="300" value="90"></label>
+    <label>Mock latency ms <input type="number" id="mockms" min="1" value="80"></label>
+    <label>Game speed
+      <select id="speed"><option value="1">1x</option><option value="2">2x</option><option value="5">5x</option><option value="10">10x</option></select>
+    </label>
+    <button id="start">Start</button>
+    <button id="end" disabled style="background:var(--panel);color:var(--text);border-color:var(--line)">End game</button>
+  </div>
+</header>
+<div id="banner"></div>
+<div id="clock">Press Start. Left and Right arrows move, Space fires.</div>
+<main>
+  <div class="board">
+    <h2>You <small>arrow keys and Space</small></h2>
+    <canvas id="cv-you" width="424" height="480"></canvas>
+    <div class="hud">
+      <div><small>Score</small><b id="you-score">0</b></div>
+      <div><small>Invaders hit</small><b id="you-kills">0</b></div>
+      <div><small>Lives</small><b id="you-lives">3</b></div>
+      <div><small>Wave</small><b id="you-wave">1</b></div>
+    </div>
+    <div class="said">Your board. The model on the right faces the same invaders and has to ask the server before every move.</div>
+  </div>
+  <div class="board">
+    <h2><span id="m-name">Model</span> <small>one request per decision</small></h2>
+    <canvas id="cv-model" width="424" height="480"></canvas>
+    <div class="hud">
+      <div><small>Score</small><b id="m-score">0</b></div>
+      <div><small>Invaders hit</small><b id="m-kills">0</b></div>
+      <div><small>Lives</small><b id="m-lives">3</b></div>
+      <div><small>Wave</small><b id="m-wave">1</b></div>
+      <div><small>Decisions</small><b id="m-dec">0</b></div>
+      <div><small>Per second</small><b id="m-dps">0.0</b></div>
+      <div><small>Median latency</small><b id="m-lat">0 ms</b></div>
+      <div><small>Last answer</small><b id="m-last">none</b></div>
+    </div>
+    <div class="said" id="m-said">The text the model was sent appears here.</div>
+  </div>
+</main>
+<table id="results" style="display:none">
+  <thead><tr><th>Player</th><th>Score</th><th>Invaders hit</th><th>Lives lost</th><th>Waves cleared</th><th>Decisions</th><th>Decisions per second</th><th>Median latency</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<script>
+const W = 424, H = 480, CANNON_Y = 448, CANNON_W = 30;
+const $ = id => document.getElementById(id);
+function median(a) { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+
+class Board {
+  constructor(canvas, seed) {
+    this.ctx = canvas.getContext("2d");
+    this.seed = seed;
+    this.cannonX = W / 2; this.bullet = null; this.bombs = [];
+    this.lives = 3; this.kills = 0; this.wave = 1; this.over = false;
+    this.safeUntil = 0; this.bombIn = 1.2; this.t = 0;
+    this.spawnWave();
+  }
+  rand() { this.seed = (this.seed * 1664525 + 1013904223) >>> 0; return this.seed / 4294967296; }
+  spawnWave() {
+    this.inv = [];
+    for (let r = 0; r < 5; r++) for (let c = 0; c < 8; c++)
+      this.inv.push({ x: 40 + c * 40, y: 40 + r * 30, col: c, row: r, alive: true });
+    this.dir = 1; this.speed = 22 * Math.pow(1.2, this.wave - 1);
+  }
+  alive() { return this.inv.filter(i => i.alive); }
+  // The lowest living invader in each column, which is the one that can be shot and can drop a bomb.
+  fronts() {
+    const f = {};
+    for (const i of this.alive()) if (!f[i.col] || i.y > f[i.col].y) f[i.col] = i;
+    return Object.values(f);
+  }
+  update(dt, input) {
+    if (this.over) return;
+    this.t += dt;
+    this.cannonX = Math.max(CANNON_W / 2 + 2, Math.min(W - CANNON_W / 2 - 2, this.cannonX + input.dir * 220 * dt));
+    if (input.fire && !this.bullet) this.bullet = { x: this.cannonX, y: CANNON_Y - 10 };
+
+    const live = this.alive();
+    let edge = false;
+    for (const i of live) { i.x += this.dir * this.speed * dt; if (i.x < 16 || i.x > W - 16) edge = true; }
+    if (edge) { this.dir *= -1; for (const i of live) { i.y += 10; i.x += this.dir * 2; } this.speed *= 1.03; }
+
+    if (this.bullet) {
+      this.bullet.y -= 640 * dt;
+      if (this.bullet.y < 0) this.bullet = null;
+      else for (const i of live) {
+        if (Math.abs(i.x - this.bullet.x) < 14 && Math.abs(i.y - this.bullet.y) < 11) {
+          i.alive = false; this.bullet = null; this.kills++; this.speed *= 1.008; break;
+        }
+      }
+    }
+
+    this.bombIn -= dt;
+    if (this.bombIn <= 0) {
+      const f = this.fronts();
+      if (f.length) { const s = f[Math.floor(this.rand() * f.length)]; this.bombs.push({ x: s.x, y: s.y + 10 }); }
+      this.bombIn = 0.55 + this.rand() * 0.9;
+    }
+    for (const b of this.bombs) b.y += 150 * dt;
+    this.bombs = this.bombs.filter(b => {
+      if (b.y > H) return false;
+      if (this.t > this.safeUntil && Math.abs(b.x - this.cannonX) < CANNON_W / 2 + 2 && Math.abs(b.y - CANNON_Y) < 10) {
+        this.lives--; this.safeUntil = this.t + 1.2;
+        if (this.lives <= 0) this.over = true;
+        return false;
+      }
+      return true;
+    });
+
+    if (live.some(i => i.y > CANNON_Y - 26)) { this.lives = 0; this.over = true; }
+    if (!this.alive().length) { this.wave++; this.bombs = []; this.spawnWave(); }
+  }
+  score() { return this.kills * 10; }
+  draw() {
+    const c = this.ctx;
+    c.clearRect(0, 0, W, H);
+    for (const i of this.inv) {
+      if (!i.alive) continue;
+      c.fillStyle = ["#f472b6", "#c084fc", "#60a5fa", "#34d399", "#facc15"][i.row];
+      c.fillRect(i.x - 12, i.y - 8, 24, 12);
+      c.fillRect(i.x - 8, i.y + 4, 5, 5); c.fillRect(i.x + 3, i.y + 4, 5, 5);
+      c.fillStyle = "#020617"; c.fillRect(i.x - 7, i.y - 4, 4, 4); c.fillRect(i.x + 3, i.y - 4, 4, 4);
+    }
+    c.fillStyle = "#f87171";
+    for (const b of this.bombs) c.fillRect(b.x - 2, b.y - 7, 4, 14);
+    if (this.bullet) { c.fillStyle = "#e2e8f0"; c.fillRect(this.bullet.x - 1.5, this.bullet.y - 8, 3, 12); }
+    const blink = this.t < this.safeUntil && Math.floor(this.t * 12) % 2;
+    if (!blink) {
+      c.fillStyle = "#38bdf8";
+      c.fillRect(this.cannonX - CANNON_W / 2, CANNON_Y, CANNON_W, 10);
+      c.fillRect(this.cannonX - 3, CANNON_Y - 8, 6, 8);
+    }
+    c.fillStyle = "#334155"; c.fillRect(0, CANNON_Y + 16, W, 2);
+    if (this.over) {
+      c.fillStyle = "rgba(2,6,23,.75)"; c.fillRect(0, 0, W, H);
+      c.fillStyle = "#e2e8f0"; c.font = "700 26px Segoe UI, sans-serif"; c.textAlign = "center";
+      c.fillText("Out of lives", W / 2, H / 2);
+    }
+  }
+}
+
+// Turns the board into the short text description that is sent to the model.
+function describe(b) {
+  const x = b.cannonX, out = [];
+  const near = b.bombs.filter(m => m.y < CANNON_Y && CANNON_Y - m.y < 190);
+  const overhead = near.some(m => Math.abs(m.x - x) < 24);
+  const leftBomb = near.some(m => m.x < x - 24 && m.x > x - 80);
+  const rightBomb = near.some(m => m.x > x + 24 && m.x < x + 80);
+  const atLeft = x < 40, atRight = x > W - 40;
+  let safe = null;
+  if (overhead) {
+    const leftOk = !leftBomb && !atLeft, rightOk = !rightBomb && !atRight;
+    safe = leftOk && !rightOk ? "left" : rightOk && !leftOk ? "right" : leftOk ? (x > W / 2 ? "left" : "right") : null;
+    out.push("A bomb is falling directly above the cannon." + (safe ? " The " + safe + " side is clear." : " Both sides are blocked."));
+  } else if (leftBomb || rightBomb) {
+    out.push("A bomb is falling close by on the " + (leftBomb && rightBomb ? "left and on the right" : leftBomb ? "left" : "right") + ".");
+  } else out.push("No bombs are near the cannon.");
+
+  const f = b.fronts();
+  let target = "none", dx = 0;
+  if (f.length) {
+    const t = f.reduce((a, i) => Math.abs(i.x - x) < Math.abs(a.x - x) ? i : a);
+    dx = t.x - x;
+    target = Math.abs(dx) <= 12 ? "above" : dx < 0 ? "left" : "right";
+    out.push(target === "above" ? "An invader is directly above the cannon."
+      : "The nearest invader is " + (Math.abs(dx) > 90 ? "far" : "a short way") + " to the " + target + ".");
+  }
+  out.push(b.bullet ? "A shot is already in the air." : "The cannon is ready to fire.");
+  if (atLeft) out.push("The cannon is at the left wall.");
+  if (atRight) out.push("The cannon is at the right wall.");
+
+  // What a careful player would do, used only by Mock mode and never sent to the model.
+  let move = "stay";
+  if (overhead && safe) move = safe;
+  else if (!overhead && target === "left" && !leftBomb) move = "left";
+  else if (!overhead && target === "right" && !rightBomb) move = "right";
+  // The single sentence used by the "One fact" prompt. The page applies the priority rule
+  // (bombs first, then the target) and the model only has to match the sentence to an option.
+  let fact, act;
+  if (overhead && safe) { fact = "A bomb is directly overhead. The only clear side is the " + safe + "."; act = safe; }
+  else if (target === "above") { fact = "An invader is directly overhead."; act = "fire"; }
+  else if (target === "none" || move === "stay") { fact = "A bomb is blocking the way to the nearest invader."; act = "wait"; }
+  else { fact = "The nearest invader is to the " + target + "."; act = target; }
+  return { text: out.join(" "), fact, act, ideal: { move, fire: target === "above" && !b.bullet } };
+}
+
+const QUESTIONS = {
+  move: {
+    type: "choice",
+    instructions: "Which way should the cannon move next? Getting out from under a falling bomb comes first, and lining up under the nearest invader comes second.",
+    criteria: {
+      left: "Move left, because the clear side is the left, or the nearest invader is to the left and no bomb is in the way",
+      right: "Move right, because the clear side is the right, or the nearest invader is to the right and no bomb is in the way",
+      stay: "Stay still, because an invader is directly above the cannon and no bomb is overhead"
+    }
+  },
+  fire: {
+    type: "noul",
+    instructions: "Should the cannon fire now?",
+    criteria: {
+      "true": "An invader is directly above the cannon and the cannon is ready to fire.",
+      "false": "No invader is directly above the cannon, or a shot is already in the air."
+    }
+  }
+};
+
+const FACT_QUESTION = {
+  act: {
+    type: "choice",
+    instructions: "What should the cannon do?",
+    criteria: {
+      left: "the clear side or the nearest invader is to the left",
+      right: "the clear side or the nearest invader is to the right",
+      fire: "an invader is directly overhead",
+      wait: "a bomb is blocking the way"
+    }
+  }
+};
+
+// The speed multiplier is read every frame, so it can be changed while a game is running.
+function speed() { return Math.max(1, +$("speed").value || 1); }
+
+let g = null;
+const keys = { left: false, right: false, fire: false };
+
+function ask(d) {
+  const fact = g.style === "fact";
+  if (g.mode === "mock" && fact) {
+    const wrong = Math.random() < 0.05;
+    const act = wrong ? ["left", "right", "fire", "wait"][Math.floor(Math.random() * 4)] : d.act;
+    return new Promise(res => setTimeout(() => res({ move: act === "left" || act === "right" ? act : "stay", fire: act === "fire",
+      conf: wrong ? 0.2 : 0.4, label: act }), g.mockms * (0.85 + Math.random() * 0.3)));
+  }
+  if (fact) {
+    return fetch(g.url, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state: d.fact, questions: FACT_QUESTION }) })
+      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(j => {
+        const a = j.answers && j.answers.act;
+        if (!a || !a.choice) throw new Error("Unexpected response shape");
+        return { move: a.choice === "left" || a.choice === "right" ? a.choice : "stay", fire: a.choice === "fire",
+          conf: typeof a.confidence === "number" ? a.confidence : 1, label: a.choice };
+      });
+  }
+  if (g.mode === "mock") {
+    const wrong = Math.random() < 0.08;
+    const move = wrong ? ["left", "right", "stay"][Math.floor(Math.random() * 3)] : d.ideal.move;
+    return new Promise(res => setTimeout(() => res({ move, fire: d.ideal.fire, conf: wrong ? 0.4 : 0.9, p: d.ideal.fire ? 0.9 : 0.1 }),
+      g.mockms * (0.85 + Math.random() * 0.3)));
+  }
+  return fetch(g.url, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ state: d.text, questions: QUESTIONS }) })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(j => {
+      const a = j.answers || {};
+      if (!a.move || !a.move.choice || !a.fire || typeof a.fire.noul !== "number") throw new Error("Unexpected response shape");
+      return { move: a.move.choice, fire: a.fire.noul >= 0.5, conf: typeof a.move.confidence === "number" ? a.move.confidence : 1, p: a.fire.noul };
+    });
+}
+
+async function modelLoop(run) {
+  while (g && g.run === run && g.running && !g.model.over) {
+    const d = describe(g.model), t0 = performance.now();
+    let r;
+    try { r = await ask(d); } catch (err) { return fail(err); }
+    if (!g || g.run !== run || !g.running) return;
+    g.lat.push(performance.now() - t0);
+    g.decisions++;
+    g.action = { dir: r.move === "left" ? -1 : r.move === "right" ? 1 : 0, fire: r.fire };
+    const took = Math.round(g.lat[g.lat.length - 1]) + " ms";
+    if (r.label) {
+      $("m-last").textContent = r.label;
+      $("m-said").innerHTML = "<b>Sent:</b> " + d.fact + "<br><b>Answer:</b> " + r.label + " at " + r.conf.toFixed(2) + " confidence, " + took;
+    } else {
+      $("m-last").textContent = r.move + (r.fire ? " + fire" : "");
+      $("m-said").innerHTML = "<b>Sent:</b> " + d.text + "<br><b>Answer:</b> move " + r.move + " at " + r.conf.toFixed(2) +
+        " confidence, fire probability " + r.p.toFixed(2) + ", " + took;
+    }
+  }
+}
+
+function start() {
+  const seed = (Date.now() & 0xffffff) + 1;
+  g = {
+    run: Date.now(), mode: $("mode").value, style: $("style").value, url: $("url").value.trim(), mockms: +$("mockms").value || 80,
+    secs: Math.max(20, +$("secs").value || 90), you: new Board($("cv-you"), seed), model: new Board($("cv-model"), seed),
+    action: { dir: 0, fire: false }, lat: [], decisions: 0, running: true, last: performance.now(), elapsed: 0
+  };
+  $("m-name").textContent = $("label").value || "Model";
+  $("banner").style.display = "none"; $("results").style.display = "none";
+  $("start").disabled = true; $("start").blur(); $("end").disabled = false;
+  modelLoop(g.run);
+  requestAnimationFrame(loop);
+}
+
+function loop(now) {
+  if (!g || !g.running) return;
+  const dt = Math.min(0.05, (now - g.last) / 1000);
+  g.last = now; g.elapsed += dt;
+  // The clock stays in real seconds. The boards run faster, in small steps so shots cannot skip past an invader.
+  let left = dt * speed();
+  while (left > 0) {
+    const step = Math.min(left, 1 / 60);
+    left -= step;
+    g.you.update(step, { dir: (keys.right ? 1 : 0) - (keys.left ? 1 : 0), fire: keys.fire });
+    g.model.update(step, g.action);
+  }
+  g.you.draw(); g.model.draw();
+  hud();
+  if (g.elapsed >= g.secs || (g.you.over && g.model.over)) return finish();
+  requestAnimationFrame(loop);
+}
+
+function hud() {
+  $("clock").textContent = Math.max(0, Math.ceil(g.secs - g.elapsed)) + " s left";
+  $("you-score").textContent = g.you.score(); $("you-kills").textContent = g.you.kills;
+  $("you-lives").textContent = g.you.lives; $("you-wave").textContent = g.you.wave;
+  $("m-score").textContent = g.model.score(); $("m-kills").textContent = g.model.kills;
+  $("m-lives").textContent = g.model.lives; $("m-wave").textContent = g.model.wave;
+  $("m-dec").textContent = g.decisions;
+  $("m-dps").textContent = (g.decisions / Math.max(0.001, g.elapsed)).toFixed(1);
+  $("m-lat").textContent = Math.round(median(g.lat)) + " ms";
+}
+
+function finish() {
+  g.running = false;
+  $("end").disabled = true;
+  hud();
+  const y = g.you, m = g.model, name = $("label").value || "Model";
+  $("clock").textContent = y.score() === m.score() ? "A tie at " + y.score() + "."
+    : (y.score() > m.score() ? "You win, " : name + " wins, ") + Math.max(y.score(), m.score()) + " to " + Math.min(y.score(), m.score()) + ".";
+  $("results").querySelector("tbody").innerHTML =
+    "<tr><td>You, " + speed() + "x speed</td><td>" + y.score() + "</td><td>" + y.kills + "</td><td>" + (3 - y.lives) + "</td><td>" + (y.wave - 1) + "</td><td></td><td></td><td></td></tr>" +
+    "<tr><td>" + name + "</td><td>" + m.score() + "</td><td>" + m.kills + "</td><td>" + (3 - m.lives) + "</td><td>" + (m.wave - 1) + "</td><td>" + g.decisions +
+    "</td><td>" + (g.decisions / Math.max(0.001, g.elapsed)).toFixed(1) + "</td><td>" + Math.round(median(g.lat)) + " ms</td></tr>";
+  $("results").style.display = "table";
+  $("start").disabled = false;
+}
+
+function fail(err) {
+  if (!g || !g.running) return;
+  g.running = false;
+  $("banner").textContent = "Could not get an answer from " + g.url + " (" + err.message +
+    "). Check that llama serve is running with a decision model loaded, or switch Mode to Mock.";
+  $("banner").style.display = "block";
+  $("start").disabled = false; $("end").disabled = true;
+}
+
+function key(e, down) {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowLeft") keys.left = down;
+  else if (e.key === "ArrowRight") keys.right = down;
+  else if (e.key === " " || e.code === "Space") keys.fire = down;
+  else return;
+  e.preventDefault();
+}
+document.addEventListener("keydown", e => key(e, true));
+document.addEventListener("keyup", e => key(e, false));
+$("start").addEventListener("click", start);
+$("end").addEventListener("click", () => { if (g && g.running) { $("end").blur(); finish(); } });
+new Board($("cv-you"), 1).draw(); new Board($("cv-model"), 1).draw();
+
+// Remembers the settings in this browser so a refresh keeps them.
+(function () {
+  const KEY = "space-invaders-settings", IDS = ["mode", "style", "url", "label", "secs", "mockms", "speed"];
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { saved = {}; }
+  IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (typeof saved[id] === "string") {
+      el.value = saved[id];
+      if (el.tagName === "SELECT" && el.value !== saved[id]) el.selectedIndex = 0;
+    }
+    const save = () => {
+      saved[id] = el.value;
+      try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) { /* storage unavailable, settings just will not persist */ }
+    };
+    el.addEventListener("change", save);
+    el.addEventListener("input", save);
+  });
+})();
+</script>
+</body>
+</html>
