@@ -4,7 +4,7 @@ Scripts and two small browser games for testing open decision models through the
 
 A decision model does not generate text. You send it a `state` and one or more typed `questions`, and it returns a probability for each answer option in a single pass. This repo was built while testing two of them, Laya and OpenJev, on an HP ZBook Ultra G1a.
 
-The write-up is on my blog: [LINK: blog post URL]
+The write-up is on my blog: [Blog Post](https://blog.terenceluk.com/2026/10/llama-cpp-decision-models.html)
 
 ## What is in here
 
